@@ -1,0 +1,376 @@
+# The GGUF quantization ladder for Qwen3-8B, served by llama.cpp.
+#
+# One axis, swept as densely as the published checkpoints allow: bits per
+# weight, from 16.01 down to 2.22. Every rung is a real file with a working CUDA
+# kernel, so nothing here needs quantizing first -- unlike the vLLM study in
+# ../bench, which builds its own checkpoints in ../quantization-cpu.
+#
+# `bpw` is MEASURED, not published. It is file_bytes * 8 / 8_190_427_136, taken
+# from the size HuggingFace reports for each file. Published bpw tables are
+# wrong here by up to 0.4 bits at the low end, because they describe a quant
+# type in the abstract and Qwen3-8B carries a 151936 x 4096 matrix at each end
+# -- 15% of its parameters -- which every publisher keeps at higher precision
+# than the name implies. Q2_K is 3.21 bpw in this model, not the 2.96 the table
+# says. `python -m ladder.models --verify` re-measures from disk and fails on a
+# rung that disagrees, which is how a truncated or renamed download is caught.
+#
+# Everything in `defaults` is pinned across rungs on purpose, and the pins that
+# matter are not the same ones bench pins:
+#
+#   n_ctx_per_slot  llama.cpp splits ONE context across `parallel` slots, so the
+#                   per-sequence budget is derived, not given. Pinning it (and
+#                   letting --ctx-size follow) is the equivalent of bench's
+#                   max_model_len pin.
+#   cache_type_k/v  f16 everywhere. Quantizing the KV cache too would put a
+#                   second variable on the x-axis and make the curve unreadable.
+#   n_gpu_layers    99 everywhere: full offload.
+#
+# Adding a rung: append an entry. `ladder.server` renders the serve script from
+# it; no code changes.
+
+defaults:
+  served_model_name: qwen3-8b
+  model_dir: ./models/gguf
+  host: 127.0.0.1
+  port: 8080
+  n_gpu_layers: 99
+  # 8192 covers the longest class (c3_rag: 4000 in + 128 out) with room for the
+  # chat template.
+  n_ctx_per_slot: 8192
+  # Ceiling on the concurrency axis: `ladder.run` refuses a cell that asks for
+  # more, because llama.cpp would queue the excess and report queued latency as
+  # concurrent latency. 8 slots x 8192 is a 65536-token cache, ~9.6 GB at f16.
+  # The GB10 box has 119 GB of unified memory, so this is not memory-bound and
+  # could be raised; it is held at 8 because the interesting part of this study
+  # is the bandwidth-bound single-stream regime, not batch scaling.
+  parallel: 8
+  batch_size: 2048
+  ubatch_size: 512
+  cache_type_k: f16
+  cache_type_v: f16
+  threads: 20
+  seed: 0
+  extra_args:
+    # Flash attention, pinned on for every rung. The spelling has drifted across
+    # llama.cpp releases: bare `--flash-attn` was accepted once, and build
+    # 64e9bce requires an explicit on|off|auto. Keeping it here as data rather
+    # than in serve_command as code is what made that a one-line fix.
+    - "--flash-attn"
+    - "on"
+    - "--no-webui"
+
+configs:
+  # --- Anchor --------------------------------------------------------------
+  #
+  # The only rung that also exists in ../bench (as baseline_bf16, on vLLM).
+  # Running it on both engines is what makes the two studies relatable at all.
+  # Not a point on the ladder curve: the tie-off.
+
+  - id: bf16
+    name: Qwen3-8B BF16
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-bf16.gguf
+    quant_type: BF16
+    bpw_nominal: 16.01
+    family: fp
+    group: anchor
+
+  # --- The ladder ----------------------------------------------------------
+  #
+  # One publisher for the whole curve. Quantization quality depends on the
+  # importance-matrix calibration set, so a Q4_K_M from one repo and an IQ3_M
+  # from another are not two points on one curve; they are two curves sampled
+  # once each. Everything below is bartowski's imatrix set.
+  #
+  # 23 rungs, 8.51 -> 2.98 bpw. That is the whole of what this publisher ships
+  # for Qwen3-8B: there is no IQ1 or IQ2_XXS here, because at 8B those widths
+  # are not worth publishing. Below 2.98 the only checkpoints that exist are
+  # Unsloth's dynamic ones, which is why the sub-3 group further down changes
+  # publisher and mixture policy at the same time and cannot join this curve.
+
+  - id: q8_0
+    name: Qwen3-8B Q8_0
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-Q8_0.gguf
+    quant_type: Q8_0
+    bpw_nominal: 8.51
+    family: kquant
+
+  - id: q6_k_l
+    name: Qwen3-8B Q6_K_L
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-Q6_K_L.gguf
+    quant_type: Q6_K_L
+    bpw_nominal: 6.86
+    family: kquant
+
+  - id: q6_k
+    name: Qwen3-8B Q6_K
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-Q6_K.gguf
+    quant_type: Q6_K
+    bpw_nominal: 6.57
+    family: kquant
+
+  - id: q5_k_l
+    name: Qwen3-8B Q5_K_L
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-Q5_K_L.gguf
+    quant_type: Q5_K_L
+    bpw_nominal: 6.09
+    family: kquant
+
+  - id: q5_k_m
+    name: Qwen3-8B Q5_K_M
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-Q5_K_M.gguf
+    quant_type: Q5_K_M
+    bpw_nominal: 5.72
+    family: kquant
+
+  - id: q5_k_s
+    name: Qwen3-8B Q5_K_S
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-Q5_K_S.gguf
+    quant_type: Q5_K_S
+    bpw_nominal: 5.59
+    family: kquant
+
+  - id: q4_k_l
+    name: Qwen3-8B Q4_K_L
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-Q4_K_L.gguf
+    quant_type: Q4_K_L
+    bpw_nominal: 5.36
+    family: kquant
+
+  - id: q4_1
+    name: Qwen3-8B Q4_1
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-Q4_1.gguf
+    quant_type: Q4_1
+    bpw_nominal: 5.13
+    family: kquant
+
+  - id: q4_k_m
+    name: Qwen3-8B Q4_K_M
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-Q4_K_M.gguf
+    quant_type: Q4_K_M
+    bpw_nominal: 4.91
+    family: kquant
+
+  - id: q3_k_xl
+    name: Qwen3-8B Q3_K_XL
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-Q3_K_XL.gguf
+    quant_type: Q3_K_XL
+    bpw_nominal: 4.86
+    family: kquant
+
+  # The three-way tie at ~4.68 bpw is the most controlled comparison in the
+  # set: same bytes, three different formats. Q4_0 is legacy round-to-nearest
+  # with no imatrix, Q4_K_S is a k-quant, IQ4_NL is a codebook I-quant. Any
+  # speed difference between them is kernel, not information content, because
+  # the bytes read per token are identical to two decimal places.
+  - id: q4_k_s
+    name: Qwen3-8B Q4_K_S
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-Q4_K_S.gguf
+    quant_type: Q4_K_S
+    bpw_nominal: 4.69
+    family: kquant
+
+  - id: iq4_nl
+    name: Qwen3-8B IQ4_NL
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-IQ4_NL.gguf
+    quant_type: IQ4_NL
+    bpw_nominal: 4.68
+    family: iquant
+
+  - id: q4_0
+    name: Qwen3-8B Q4_0
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-Q4_0.gguf
+    quant_type: Q4_0
+    bpw_nominal: 4.68
+    family: kquant
+
+  - id: iq4_xs
+    name: Qwen3-8B IQ4_XS
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-IQ4_XS.gguf
+    quant_type: IQ4_XS
+    bpw_nominal: 4.46
+    family: iquant
+
+  - id: q3_k_l
+    name: Qwen3-8B Q3_K_L
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-Q3_K_L.gguf
+    quant_type: Q3_K_L
+    bpw_nominal: 4.33
+    family: kquant
+
+  - id: q3_k_m
+    name: Qwen3-8B Q3_K_M
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-Q3_K_M.gguf
+    quant_type: Q3_K_M
+    bpw_nominal: 4.03
+    family: kquant
+
+  # Second near-exact tie: IQ3_M and Q2_K_L are 0.01 bpw apart.
+  - id: iq3_m
+    name: Qwen3-8B IQ3_M
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-IQ3_M.gguf
+    quant_type: IQ3_M
+    bpw_nominal: 3.81
+    family: iquant
+
+  - id: q2_k_l
+    name: Qwen3-8B Q2_K_L
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-Q2_K_L.gguf
+    quant_type: Q2_K_L
+    bpw_nominal: 3.80
+    family: kquant
+
+  - id: q3_k_s
+    name: Qwen3-8B Q3_K_S
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-Q3_K_S.gguf
+    quant_type: Q3_K_S
+    bpw_nominal: 3.68
+    family: kquant
+
+  - id: iq3_xs
+    name: Qwen3-8B IQ3_XS
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-IQ3_XS.gguf
+    quant_type: IQ3_XS
+    bpw_nominal: 3.54
+    family: iquant
+
+  - id: iq3_xxs
+    name: Qwen3-8B IQ3_XXS
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-IQ3_XXS.gguf
+    quant_type: IQ3_XXS
+    bpw_nominal: 3.29
+    family: iquant
+
+  - id: q2_k
+    name: Qwen3-8B Q2_K
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-Q2_K.gguf
+    quant_type: Q2_K
+    bpw_nominal: 3.21
+    family: kquant
+
+  - id: iq2_m
+    name: Qwen3-8B IQ2_M
+    repo: bartowski/Qwen_Qwen3-8B-GGUF
+    gguf_file: Qwen_Qwen3-8B-IQ2_M.gguf
+    quant_type: IQ2_M
+    bpw_nominal: 2.98
+    family: iquant
+
+  # --- Unsloth dynamic, matched against the curve --------------------------
+  #
+  # Reported as its own group, never merged into the curve above. A UD quant
+  # varies bit width per tensor by a hand-tuned policy, so its bpw is a mean
+  # over a mixture rather than a width, and a different publisher's imatrix
+  # sits underneath it. Two variables at once.
+  #
+  # Each of these sits within ~0.15 bpw of a bartowski rung, which is the point:
+  # at matched measured size, does spending the bytes non-uniformly change
+  # *speed*? Expected to be "barely", since the kernel is chosen per tensor and
+  # the mixture mostly shifts which kernel runs where. Worth showing rather than
+  # assuming, and it is the direct answer to the original Unsloth question.
+
+  - id: ud_q4_k_xl
+    name: Qwen3-8B UD-Q4_K_XL (Unsloth dynamic)
+    repo: unsloth/Qwen3-8B-GGUF
+    gguf_file: Qwen3-8B-UD-Q4_K_XL.gguf
+    quant_type: UD-Q4_K_XL
+    bpw_nominal: 5.02
+    family: kquant
+    group: unsloth_dynamic
+
+  - id: ud_q3_k_xl
+    name: Qwen3-8B UD-Q3_K_XL (Unsloth dynamic)
+    repo: unsloth/Qwen3-8B-GGUF
+    gguf_file: Qwen3-8B-UD-Q3_K_XL.gguf
+    quant_type: UD-Q3_K_XL
+    bpw_nominal: 4.21
+    family: kquant
+    group: unsloth_dynamic
+
+  - id: ud_q2_k_xl
+    name: Qwen3-8B UD-Q2_K_XL (Unsloth dynamic)
+    repo: unsloth/Qwen3-8B-GGUF
+    gguf_file: Qwen3-8B-UD-Q2_K_XL.gguf
+    quant_type: UD-Q2_K_XL
+    bpw_nominal: 3.42
+    family: kquant
+    group: unsloth_dynamic
+
+  - id: ud_iq3_xxs
+    name: Qwen3-8B UD-IQ3_XXS (Unsloth dynamic)
+    repo: unsloth/Qwen3-8B-GGUF
+    gguf_file: Qwen3-8B-UD-IQ3_XXS.gguf
+    quant_type: UD-IQ3_XXS
+    bpw_nominal: 3.33
+    family: iquant
+    group: unsloth_dynamic
+
+  - id: ud_iq2_m
+    name: Qwen3-8B UD-IQ2_M (Unsloth dynamic)
+    repo: unsloth/Qwen3-8B-GGUF
+    gguf_file: Qwen3-8B-UD-IQ2_M.gguf
+    quant_type: UD-IQ2_M
+    bpw_nominal: 3.04
+    family: iquant
+    group: unsloth_dynamic
+
+  # --- Below the published floor -------------------------------------------
+  #
+  # 2.98 bpw is where Qwen3-8B stops being quantized by anyone doing uniform
+  # k- and I-quants: at 8B the quality is not worth publishing. These three are
+  # the only checkpoints that exist below it, and all three are Unsloth dynamic.
+  #
+  # Kept as a third group rather than folded into either of the two above,
+  # because they are the extension of the *dynamic* line, not of the curve, and
+  # because 2.22 bpw on an 8B model is well past the point where the answer to
+  # "is it fast" stops mattering. They are here because the question was how far
+  # down the axis goes, and this is how far.
+
+  - id: ud_iq2_xxs
+    name: Qwen3-8B UD-IQ2_XXS (Unsloth dynamic)
+    repo: unsloth/Qwen3-8B-GGUF
+    gguf_file: Qwen3-8B-UD-IQ2_XXS.gguf
+    quant_type: UD-IQ2_XXS
+    bpw_nominal: 2.54
+    family: iquant
+    group: sub3_extension
+
+  - id: ud_iq1_m
+    name: Qwen3-8B UD-IQ1_M (Unsloth dynamic)
+    repo: unsloth/Qwen3-8B-GGUF
+    gguf_file: Qwen3-8B-UD-IQ1_M.gguf
+    quant_type: UD-IQ1_M
+    bpw_nominal: 2.34
+    family: iquant
+    group: sub3_extension
+
+  - id: ud_iq1_s
+    name: Qwen3-8B UD-IQ1_S (Unsloth dynamic)
+    repo: unsloth/Qwen3-8B-GGUF
+    gguf_file: Qwen3-8B-UD-IQ1_S.gguf
+    quant_type: UD-IQ1_S
+    bpw_nominal: 2.22
+    family: iquant
+    group: sub3_extension

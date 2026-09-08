@@ -1,0 +1,13 @@
+# Normalize to LF in the repository.
+* text=auto eol=lf
+
+# These are executed by bash on the Linux GPU box. A CRLF checkout makes the
+# shell read the carriage return as part of the last argument and fail with
+# "\r: command not found" -- so they are pinned to LF regardless of platform.
+*.sh text eol=lf
+
+# Frozen prompt sets. Byte-identical across both studies is the whole point of
+# freezing them: the manifest records a sha256 per class and a line-ending
+# rewrite would silently change every digest.
+*.jsonl -text
+prompts/manifest.json -text

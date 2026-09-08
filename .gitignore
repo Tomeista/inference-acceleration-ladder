@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+# Local MLflow file store; runs are reproducible from the configs.
+mlruns/
+# Per-request JSONL from each sweep. Logged to MLflow as artifacts already.
+results/
+# GGUF checkpoints, fetched by scripts/download_models.sh. ~147 GiB.
+models/
+# Local MLflow store, as in ../bench.
+mlflow.db
+mlflow.db-journal
+
+# NOTE: models.lock.json is deliberately NOT ignored. It records the exact byte
+# size, and therefore the exact measured bits-per-weight, of every rung that was
+# swept. That is the x-axis of the study and it is provenance rather than
+# machine state, so it belongs in version control next to the results.
