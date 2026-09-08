@@ -199,8 +199,22 @@ about a third of that and enough to see the curve's shape before committing.
 
 - **`prefill=0.xx`** below ~0.98 on the summary line. A slot reused a cached
   prefix, so TTFT in that cell is faster than the rung can deliver cold — and
-  rungs that reuse more look quantization-faster. Reduce `--requests-per-cell`
-  below the prompt-set size so the set does not wrap, and rerun the cell.
+  rungs that reuse more look quantization-faster.
+
+  The cause is *not* the prompt set wrapping. It is that different prompts in
+  the same class share a prefix — the tool schema in `c5_toolcall`, the chat
+  template in `c1_chat`, a shared source document in `c3_rag` — and llama.cpp
+  assigns an incoming request to whichever slot already holds the longest
+  matching prefix. It is therefore worse at `c=8` than at `c=1`, because eight
+  occupied slots offer eight chances to match. Lowering `--requests-per-cell`
+  does nothing.
+
+  The fix is `--slot-prompt-similarity 0` in `extra_args` (`0.0 = disabled`;
+  the default is `0.10`), then `--emit-scripts`. `--cache-reuse 0` does not
+  govern this; it controls KV shifting within a slot, not slot selection.
+  Measured on this box, `c2_longform` sits at 0.97 legitimately — a few tokens
+  of shared template and nothing more — so 0.97 is the clean reading, not a
+  failure.
 - **`did not stop on length`.** `ignore_eos` stopped being honoured mid-sweep,
   usually a different server binary. Everything since the last clean cell is
   suspect.
@@ -210,6 +224,21 @@ about a third of that and enough to see the curve's shape before committing.
   for.
 
 ## Step 7: read it
+
+```bash
+uv run python -m ladder.report                 # the merged curve
+uv run python -m ladder.report --all           # including cells that failed a check
+uv run python -m ladder.report --csv curve.csv # the table, for plotting
+```
+
+**Use this rather than reading cells out of the UI by hand**, for one specific
+reason: MLflow appends, so a class that was measured twice has two cells, and
+nothing in the UI stops a group-by from averaging a discarded measurement with
+the one that replaced it. `ladder.report` keeps the most recent cell per
+`(config_id, class_id, concurrency)`, says how many it superseded, and drops
+cells that failed a validity check unless asked for them.
+
+The UI is still the right tool for looking at one run:
 
 ```bash
 uv run mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5000
