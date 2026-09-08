@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from bench.metrics import MetricsDialect
+from ladder.harness.metrics import MetricsDialect
 
 # llama-server exposes these only when started with `--metrics`.
 #

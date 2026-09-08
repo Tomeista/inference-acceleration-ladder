@@ -30,11 +30,11 @@ import sys
 import time
 from pathlib import Path
 
-from bench import metrics as metrics_mod
-from bench import tracking
-from bench.classes import PROMPTS_DIR, PromptClass, select_classes
-from bench.client import run_load, warmup
-from bench.scenarios import read_scenarios
+from ladder.harness import metrics as metrics_mod
+from ladder.harness import tracking
+from ladder.harness.classes import PROMPTS_DIR, PromptClass, select_classes
+from ladder.harness.client import run_load, warmup
+from ladder.harness.scenarios import read_scenarios
 
 from ladder.dialect import LLAMACPP, prefill_reuse_check, throughput_cross_check
 from ladder.models import LOCK_PATH
@@ -55,11 +55,20 @@ ARTIFACT_ROOT = PACKAGE_ROOT / "results"
 # but they do have to be queryable together for the F16 anchor to be readable.
 DEFAULT_EXPERIMENT = "inference-acceleration-ladder"
 
-# Default tracking store is bench's own sqlite database, so `mlflow ui` from
-# either directory shows both experiments and the F16 anchor can be read across
-# them in one query. Not bench/mlruns -- that directory is the artifact tree,
-# and current MLflow refuses the filesystem backend outright.
-DEFAULT_TRACKING_URI = "sqlite:///" + (PACKAGE_ROOT.parent / "bench" / "mlflow.db").as_posix()
+# This repository's own store, so a clone runs without anything beside it.
+# Sqlite rather than a directory of files: current MLflow refuses the
+# filesystem backend outright ("in maintenance mode").
+#
+# To read this study and the vLLM one in a single table -- which is the only
+# way the BF16 anchor can be compared across engines -- point both at one file
+# explicitly, rather than having either default into the other's directory:
+#
+#     python -m ladder.run --tracking-uri sqlite:////abs/path/shared.db
+#
+# The experiment names differ, so the two never pool into one query by
+# accident, which would let an engine difference masquerade as a quantization
+# difference.
+DEFAULT_TRACKING_URI = "sqlite:///" + (PACKAGE_ROOT / "mlflow.db").as_posix()
 
 
 def auto_requests(concurrency: int) -> int:
@@ -102,8 +111,8 @@ async def run_cell(
     if n_requests > len(scenarios):
         print(
             f"  note: {cls.id} has {len(scenarios)} prompts for {n_requests} requests; "
-            f"the set will wrap. Repeating a prompt is worse here than in bench: a "
-            f"slot that still holds it skips prefill entirely.",
+            f"the set will wrap, and a repeated prompt may land on a slot that "
+            f"still holds it and skip prefill entirely.",
             file=sys.stderr,
         )
 
@@ -410,7 +419,11 @@ async def main_async(args: argparse.Namespace) -> int:
 
 
 def _manifest_digest() -> str:
-    """Tie a run to the exact prompt sets it used -- bench's, not a copy."""
+    """Tie a run to the exact prompt sets it used.
+
+    The digests are the ones recorded when the sets were built, so they also
+    identify these prompts as the same bytes the vLLM study measured.
+    """
     path = PROMPTS_DIR / "manifest.json"
     if not path.exists():
         return "missing"

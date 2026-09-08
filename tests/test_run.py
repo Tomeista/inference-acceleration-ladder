@@ -7,11 +7,13 @@ box, halfway through a sweep that takes most of a day.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
 
-from bench.classes import PROMPTS_DIR, select_classes
+from ladder.harness.classes import PROMPTS_DIR, select_classes
 
 from ladder import run as run_mod
 from ladder.server import load_configs, server_info
@@ -32,22 +34,37 @@ def args():
 # --------------------------------------------------------------------------
 
 
-def test_the_ladder_reads_benchs_frozen_prompts_not_its_own():
+def test_the_prompt_files_are_the_bytes_the_manifest_recorded():
     """The single most expensive mistake this study could have made.
 
-    The F16 anchor ties the llama.cpp curve to the vLLM study only if both
-    engines were shown byte-identical prompts. A second prompt set here would
-    have looked harmless and quietly broken that.
+    The BF16 anchor ties the llama.cpp curve to the vLLM study only if both
+    engines were shown byte-identical prompts. These files are a copy of that
+    set, so "same directory" is no longer what guarantees it -- the digests
+    are. A prompt set that was regenerated, re-tokenized, or line-ending
+    mangled in transit would still load and still look plausible; only this
+    test would notice.
     """
-    resolved = PROMPTS_DIR.resolve()
-    assert resolved.name == "prompts"
-    assert resolved.parent.name == "bench", f"prompts came from {resolved}"
+    manifest = json.loads((PROMPTS_DIR / "manifest.json").read_text(encoding="utf-8"))
+    recorded = manifest["classes"]
+    assert recorded, "manifest lists no classes"
 
-    cls = select_classes(["c1_chat"])[0]
-    assert cls.prompt_file.exists(), "bench's prompt set is not built; run bench.build_prompts"
+    for class_id, stats in sorted(recorded.items()):
+        path = PROMPTS_DIR / f"{class_id}.jsonl"
+        assert path.exists(), f"{class_id} is in the manifest but not on disk"
+        actual = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+        assert actual == stats["sha256_16"], (
+            f"{class_id}.jsonl is not the frozen set: manifest says "
+            f"{stats['sha256_16']}, file is {actual}. Results measured against "
+            f"it cannot be compared with the vLLM study."
+        )
 
 
-def test_the_manifest_digest_names_benchs_prompt_sets():
+def test_every_enabled_class_has_its_prompt_file():
+    for cls in select_classes():
+        assert cls.prompt_file.exists(), f"{cls.id} has no prompt file"
+
+
+def test_the_manifest_digest_identifies_the_prompt_sets():
     """Recorded on every run, so a result can be traced to the exact prompts."""
     digest = run_mod._manifest_digest()
     assert digest != "missing"

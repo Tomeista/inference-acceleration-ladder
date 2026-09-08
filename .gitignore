@@ -7,7 +7,7 @@ mlruns/
 results/
 # GGUF checkpoints, fetched by scripts/download_models.sh. ~147 GiB.
 models/
-# Local MLflow store, as in ../bench.
+# Local MLflow store. Binary, and rewritten on every run.
 mlflow.db
 mlflow.db-journal
 

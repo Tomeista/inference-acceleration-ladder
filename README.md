@@ -3,10 +3,14 @@
 A bits-per-weight speed curve for Qwen3-8B, measured on llama.cpp across 32
 quantization widths from 16.01 down to 2.22 bits.
 
-Sibling to [`../bench`](../bench), which measures seven vLLM servers across
-three axes (quantization, sparsity, speculation). This study measures one axis
-as densely as the published checkpoints allow, and reuses `bench` for everything
-that produces a number.
+A companion to the `bench` study, which measures seven vLLM servers across
+three axes (quantization, sparsity, speculation). This one measures a single
+axis as densely as the published checkpoints allow.
+
+This repository is **self-contained**: clone it and run it, nothing else
+required. The measurement code it shares with that study -- load client,
+percentile math, gauge sampling, MLflow structure -- is vendored under
+`src/ladder/harness/`, and the prompt sets are copied in with their digests.
 
 ## Why a second study rather than more configs in the first
 
@@ -24,9 +28,10 @@ does speed move with bit width" can be asked at more than three points.
 The cost is that the engine is now a variable. Which is why:
 
 **The two studies are never merged into one table.** They live in separate
-MLflow experiments (`inference-acceleration` and `inference-acceleration-ladder`)
-inside one store — bench's `mlflow.db` — so the anchor can be read across both
-in a single query while nothing else pools by accident. Every run here is tagged
+MLflow experiments (`inference-acceleration` and `inference-acceleration-ladder`).
+Each repository defaults to its own `mlflow.db`; to read the anchor across both
+in one query, point them at a shared file with `--tracking-uri`. The experiment
+names keep them from pooling by accident. Every run here is tagged
 `engine=llama.cpp`.
 
 **BF16 is run on both engines as an anchor.** It is the only configuration the
@@ -37,9 +42,11 @@ separately for that reason. See the RUNBOOK on why the vLLM half of this is in
 doubt on the current hardware.
 
 **Both engines see byte-identical prompts.** This package builds no prompt sets.
-It reads `bench/prompts/*.jsonl` through `bench.classes.PROMPTS_DIR` and records
-the same manifest digest on every run. A test asserts the path still resolves
-into `bench/`.
+`prompts/` is a copy of the frozen files the vLLM study measured, carried with
+its `manifest.json`, and every run records the same manifest digest. Because
+they are now a copy rather than a shared directory, a test hashes each file and
+fails if it is not the bytes the manifest recorded -- a regenerated or mangled
+prompt set would otherwise load fine and quietly invalidate the anchor.
 
 ## Hardware
 
@@ -152,14 +159,16 @@ showing rather than assuming. A test enforces that every UD rung has a partner.
 
 ## What is reused, and what is new
 
-Everything that turns requests into numbers is `bench`'s, imported unchanged:
+Everything that turns requests into numbers came from the `bench` study and is
+vendored verbatim into `src/ladder/harness/`, so the two report the same
+quantity under the same name:
 
-| From `bench` | What it does here |
+| Vendored module | What it does here |
 |---|---|
 | `client.py` | The load generator. Already engine-agnostic; speaks OpenAI streaming, which `llama-server` provides. |
 | `scenarios.py` | `Scenario` / `Turn`, and the frozen JSONL format. |
-| `classes.py` | The four prompt classes, read from `bench/config/classes.yaml`. |
-| `build_prompts.py`, `corpus.py` | Not called. The prompt files they produced are read directly. |
+| `classes.py` | The four prompt classes, read from `config/classes.yaml`. |
+| `build_prompts.py`, `corpus.py` | *Not* vendored. They need `transformers` and a tokenizer checkout; the files they produced are read directly from `prompts/`. |
 | `metrics.py` | Percentiles, aggregation, counter differencing, peak gauge sampling. |
 | `tracking.py` | MLflow parent/child run structure. |
 
@@ -168,22 +177,29 @@ New here, and only this: `server.py` (llama.cpp's context arithmetic and CLI),
 (GGUF inventory and measured bits per weight), `run.py` (the driver, with
 engine-specific probing and guards).
 
-One change was made to `bench` to enable this, and it is backwards compatible:
-`bench.metrics` gained a `MetricsDialect` describing what one engine calls
-things, with `VLLM` as the default everywhere. All 45 existing bench tests pass
-unchanged. The alternative was copying `GaugeSampler`, which would have put two
-copies of the "absent rather than zero" subtlety in the tree.
+One change was made upstream to enable this, and it is backwards compatible:
+`metrics.py` gained a `MetricsDialect` describing what one engine calls things,
+with `VLLM` as the default everywhere. All 45 existing bench tests pass
+unchanged. That is what lets `GaugeSampler` serve both engines instead of being
+reimplemented, so the "absent rather than zero" convention has one
+implementation rather than two.
+
+The vendored copies are byte-identical to their originals apart from the import
+prefix, so checking them against an upstream checkout is a `diff` rather than a
+merge. `src/ladder/harness/__init__.py` gives the exact command and names the
+one deliberate exception (`classes.py`, whose hop to the repo root is one
+directory longer here).
 
 ## Two things llama.cpp does differently that change the design
 
 **Context is divided, not per-sequence.** `--ctx-size` is the size of the
-*entire* KV cache, split evenly across `--parallel` slots. `bench` pins
+*entire* KV cache, split evenly across `--parallel` slots. vLLM pins
 `max_model_len` as a per-sequence budget; here the per-sequence budget is
 derived, so `n_ctx_per_slot` is the pinned field and `--ctx-size` follows from
 it. A serve script started with the wrong one does not error — `c3_rag`'s
 4000-token prompts just stop fitting.
 
-**The concurrency axis is shorter than bench's.** `bench` sweeps {1, 32}; here
+**The concurrency axis is shorter.** The vLLM study sweeps {1, 32}; here
 the default is {1, 8}. On this box that is *not* a memory limit — 119 GB unified
 would hold far more — it is that the bandwidth-bound single-stream regime is
 what this study is about, and `ladder.run` refuses a cell asking for more
@@ -192,16 +208,16 @@ concurrent latency.
 
 ## What llama.cpp does not report, and why that is fine
 
-Of the four validity signals `bench` records: **preemptions** do not exist
-(llama.cpp defers rather than evicting, so queue depth is the pressure signal
-instead); **speculative acceptance** does not apply (no draft model here);
-**KV cache peak and queue depth** map directly and are reported under bench's
-own metric names. `preemption_delta` returns nothing rather than `0.0`, because
-`0.0` would read as "checked, none happened" — a claim this engine cannot make.
-`bench`'s "absent rather than zero" convention already covered all of it; it
-needed a name table, not new logic.
+Of the four validity signals the vLLM study records: **preemptions** do not
+exist (llama.cpp defers rather than evicting, so queue depth is the pressure
+signal instead); **speculative acceptance** does not apply (no draft model
+here); **KV cache peak and queue depth** map directly and are reported under
+the same metric names, so one query reads both studies. `preemption_delta`
+returns nothing rather than `0.0`, because `0.0` would read as "checked, none
+happened" — a claim this engine cannot make. The "absent rather than zero"
+convention already covered all of it; it needed a name table, not new logic.
 
-## One validity check bench does not have
+## One validity check the vLLM study does not have
 
 `llamacpp:prompt_tokens_total` counts tokens the server actually *processed*,
 and a slot skips whatever prefix it still holds. The client reports what each
@@ -216,40 +232,35 @@ Every cell logs `prefill_processed_ratio` and warns below 0.98.
 
 ```
 config/ladder.yaml      the 32 rungs
+config/classes.yaml     the four prompt classes
+prompts/                frozen prompt sets + manifest.json (digests checked by the suite)
 scripts/                generated serve + download scripts, committed
 src/ladder/
   server.py             config loader, serve scripts, /props probe, context guards
   dialect.py            llama.cpp metric names + the prefill-reuse check
   models.py             GGUF inventory, measured bits per weight
   run.py                sweep driver and preflight
+  harness/              vendored from the bench study; see its __init__ docstring
 tests/mock_llama_server.py   fake llama-server, so the harness is testable without a GPU
 ```
 
 ## Development
 
-This repository depends on its sibling. Clone both into the same parent
-directory, or nothing resolves:
-
-```
-inference-acceleration/
-    bench/      # github.com/<you>/inference-acceleration-bench
-    ladder/     # github.com/<you>/inference-acceleration-ladder   <- you are here
-```
+No sibling checkout, no path dependencies:
 
 ```bash
-git clone <bench-url>  bench
 git clone <ladder-url> ladder
-cd ladder && uv sync --extra mock --extra dev && uv run pytest -q
+cd ladder && uv sync --extra mock --extra dev && uv run pytest -q   # 46 tests
 ```
 
-`pyproject.toml` points at `../bench` as an **editable** path dependency, and it
-has to stay editable: `bench.classes` resolves the frozen prompt directory
-relative to its own `__file__`, so a copied wheel would read prompts out of
-`site-packages` and the two studies would quietly stop sharing a prompt set --
-which would silently invalidate the anchor that relates them.
+The tradeoff that buys is worth stating plainly: `src/ladder/harness/` is a
+copy, so a fix made upstream in `bench` does not arrive here on its own. The
+files are kept byte-identical apart from the import prefix precisely so that
+picking such a fix up stays a `diff` and a `cp`.
 
-If you would rather not keep them side by side, change `[tool.uv.sources]` to a
-git dependency on the bench repo. The prompts travel with it either way, since
-`bench/prompts/*.jsonl` is tracked.
+The prompt sets are copied too, and that is the riskier half -- two copies of a
+frozen dataset can drift without anything failing. `manifest.json` travels with
+them and the suite hashes every file against it, so drift is a test failure
+rather than a silently unusable anchor.
 
 See [RUNBOOK.md](RUNBOOK.md) for the GPU-box procedure.

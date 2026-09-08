@@ -1,11 +1,12 @@
 # RUNBOOK — the GGUF ladder
 
 Steps to run on `dell-gb10-1`, in order. Each block is copy-pasteable and says
-what to paste back. Mirrors [`../bench/RUNBOOK.md`](../bench/RUNBOOK.md); where
-a step differs, it says why.
+what to paste back. It mirrors the RUNBOOK of the vLLM `bench` study; where a
+step differs, it says why.
 
-Unlike bench, this study builds no checkpoints. Every rung is a published file,
-so `../quantization-cpu/` is not involved at all.
+This repository is self-contained -- no sibling checkout is needed. And unlike
+that study, this one builds no checkpoints: every rung is a published file, so
+no quantization step is involved at all.
 
 **Machine.** NVIDIA GB10, compute capability 12.1, aarch64, 20 cores, 119 GB
 unified LPDDR5X, CUDA 13.0, driver 580.95.05. No sudo, not in the `docker`
@@ -20,7 +21,7 @@ dialect, the guards and the MLflow structure get checked before deployment.
 
 ```bash
 uv sync --extra mock --extra dev
-uv run pytest -q          # 45 tests
+uv run pytest -q          # 46 tests
 ```
 
 Then a smoke sweep against the mock:
@@ -76,7 +77,7 @@ llama-bench --list-devices
 ## Step 2: fetch the ladder
 
 ```bash
-cd ~/inference-acceleration/ladder
+cd ~/ladder          # wherever this repository was cloned
 uv sync --extra mock --extra dev
 uv run python -m ladder.models --emit-download
 uv run bash scripts/download_models.sh
@@ -162,14 +163,14 @@ uv run python -m ladder.run --config-id bf16
 
 Roughly **70 minutes**, dominated by `c2_longform` at 14.9 tok/s.
 
-> **The vLLM half of this anchor is in doubt.** `../bench` assumes vLLM, and
-> this box is aarch64 with no sudo and no docker group. vLLM ships no prebuilt
-> aarch64 + CUDA 13 wheels, and NGC containers need the docker group. Building
-> from source is a multi-hour, failure-prone job. Until that is resolved the
-> ladder stands alone: it is internally valid and complete on its own, but no
-> numeric statement can be made relating it to the vLLM study. Do not quietly
-> compare a llama.cpp number to a vLLM number from an earlier machine — the
-> engine and the hardware would both differ.
+> **The vLLM half of this anchor is in doubt.** The `bench` study assumes vLLM,
+> and this box is aarch64 with no sudo and no docker group. vLLM ships no
+> prebuilt aarch64 + CUDA 13 wheels, and NGC containers need the docker group.
+> Building from source is a multi-hour, failure-prone job. Until that is
+> resolved the ladder stands alone: it is internally valid and complete on its
+> own, but no numeric statement can be made relating it to the vLLM study. Do
+> not quietly compare a llama.cpp number to a vLLM number from an earlier
+> machine — the engine and the hardware would both differ.
 
 ## Step 6: sweep the ladder
 
@@ -211,11 +212,20 @@ about a third of that and enough to see the curve's shape before committing.
 ## Step 7: read it
 
 ```bash
-uv run mlflow ui --backend-store-uri sqlite:///../bench/mlflow.db --port 5000
+uv run mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5000
 ```
 
-Both studies live in that one sqlite database. `inference-acceleration-ladder`
-is this study; `inference-acceleration` is bench. Filter on `tags.engine`.
+That is this repository's own store, written by default. To read this study and
+the vLLM one in a single table -- the only way the BF16 anchor can be compared
+across engines -- run both against one explicit path instead:
+
+```bash
+uv run python -m ladder.run --config-id bf16 --tracking-uri sqlite:////abs/path/shared.db
+```
+
+The experiment names differ (`inference-acceleration-ladder` here,
+`inference-acceleration` for the vLLM study), so they never pool into one query
+by accident. Filter on `tags.engine`.
 
 **The curve.** `params.bpw_measured` against `metrics.output_tps`, one class at a
 time, `params.ladder_group = "ladder"` only. Expect near-linear at concurrency 1;
@@ -261,6 +271,6 @@ The prompt sets run with `ignore_eos` and fixed lengths precisely so output
 Quality is a separate pass with natural stopping, on the same frozen prompts.
 
 **Nothing here is a serving recommendation.** llama.cpp with eight slots on a
-bandwidth-limited unified-memory box is not how the models in `../bench` would
-be deployed. This study answers "how does speed move with bit width", and the
+bandwidth-limited unified-memory box is not how the models in the vLLM study
+would be deployed. This study answers "how does speed move with bit width", and the
 engine was chosen because it is the only one that can be asked at 32 points.

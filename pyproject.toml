@@ -1,14 +1,13 @@
 [project]
 name = "ladder"
 version = "0.1.0"
-description = "GGUF bits-per-weight ladder for Qwen3-8B on llama.cpp. Sibling study to ../bench."
+description = "GGUF bits-per-weight ladder for Qwen3-8B on llama.cpp. Self-contained."
 requires-python = ">=3.11"
 dependencies = [
-    # The load generator, prompt sets, percentile math, gauge sampling and
-    # MLflow structure all come from here. This study adds a config schema, a
-    # metric-name dialect and a driver; everything that produces a number is
-    # bench's.
-    "bench",
+    # No dependency on the bench study: the load generator, percentile math,
+    # gauge sampling and MLflow structure are vendored into src/ladder/harness/
+    # so this repository can be cloned and run on its own. See that package's
+    # docstring for what was copied and how to resync it.
     "httpx>=0.28",
     "pyyaml>=6.0",
     "mlflow>=2.19",
@@ -17,13 +16,6 @@ dependencies = [
 [project.optional-dependencies]
 mock = ["fastapi>=0.115", "uvicorn>=0.34"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
-
-[tool.uv.sources]
-# Editable, and it has to stay editable: bench.classes resolves the frozen
-# prompt directory relative to its own __file__, so a copied wheel would read
-# prompts out of site-packages and the two studies would silently stop sharing
-# a prompt set.
-bench = { path = "../bench", editable = true }
 
 [build-system]
 requires = ["hatchling"]

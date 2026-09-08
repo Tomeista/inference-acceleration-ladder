@@ -1,0 +1,107 @@
+# Prompt classes for the latency/throughput sweep.
+#
+# For speed measurement, what a prompt *says* barely matters. Three properties
+# do: input length (prefill cost -> TTFT), output length (decode steps ->
+# TPOT/throughput), and output entropy (speculative acceptance rate). Each
+# class below pins those to a fixed point so that a difference between two
+# server configs cannot be an artifact of prompt-length drift.
+#
+# Adding a class: append an entry here and register a builder of the same
+# `source` name in `bench.build_prompts.BUILDERS`. Nothing else changes.
+#
+# `input_tokens` is the exact size of the chat-templated prompt as the model
+# sees it (template overhead and tool schemas included), not the raw user text.
+
+defaults:
+  # Qwen3 renders a thinking block by default. Left on, output length would be
+  # driven by how long the model chose to reason rather than by `output_tokens`,
+  # which would confound every class. Thinking gets its own class (c8) instead.
+  thinking: false
+  num_prompts: 128
+
+classes:
+  - id: c1_chat
+    name: Short chat QA
+    description: Balanced short-in/short-out baseline. TTFT-sensitive.
+    source: chat
+    input_tokens: 64
+    output_tokens: 128
+    temperature: 0.0
+    enabled: true
+
+  - id: c2_longform
+    name: Long-form generation
+    description: >-
+      Pure decode at high entropy. Best case for weight-only quantization at
+      low concurrency, worst case for speculative decoding.
+    source: longform
+    input_tokens: 128
+    output_tokens: 1024
+    temperature: 0.7
+    enabled: true
+
+  - id: c3_rag
+    name: RAG document QA
+    description: >-
+      Pure prefill. This is where W4A16 is expected to lose to BF16 on TTFT,
+      so it is the class that keeps the study honest about quantization.
+    source: rag
+    input_tokens: 4000
+    output_tokens: 128
+    temperature: 0.0
+    enabled: true
+
+  - id: c5_toolcall
+    name: Structured tool call
+    description: >-
+      Low-entropy templated JSON output. Best case for speculative decoding,
+      and the capability the wider study is actually about.
+    source: toolcall
+    input_tokens: 600
+    output_tokens: 128
+    temperature: 0.0
+    uses_tools: true
+    enabled: true
+
+  # --- Not in the MVP. Enable once a builder for `source` exists. -----------
+
+  - id: c4_summarization
+    name: Long summarization
+    description: Prefill-heavy with copy-heavy decode; high speculative acceptance.
+    source: summarization
+    input_tokens: 8000
+    output_tokens: 512
+    temperature: 0.0
+    enabled: false
+
+  - id: c6_code
+    name: Code generation
+    description: Low entropy, long decode. Canonical speculative-decoding best case.
+    source: code
+    input_tokens: 300
+    output_tokens: 512
+    temperature: 0.0
+    enabled: false
+
+  - id: c7_agent
+    name: Multi-turn ReAct trace
+    description: >-
+      Growing KV across five sequential turns. Needs a Scenario subclass that
+      builds turn N+1 from turn N's tool result; the client already loops turns.
+    source: agent
+    input_tokens: 500
+    output_tokens: 100
+    turns: 5
+    temperature: 0.0
+    uses_tools: true
+    enabled: false
+
+  - id: c8_thinking
+    name: Reasoning / thinking mode
+    description: Very long CoT decode. Maximum decode-bound acceleration payoff.
+    source: thinking
+    input_tokens: 200
+    output_tokens: 2048
+    temperature: 0.6
+    thinking: true
+    enabled: false

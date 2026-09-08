@@ -13,9 +13,9 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from bench.client import run_load
-from bench.metrics import GaugeSampler, parse_prometheus, preemption_delta, scrape, spec_decode_metrics
-from bench.scenarios import Scenario, Turn
+from ladder.harness.client import run_load
+from ladder.harness.metrics import GaugeSampler, parse_prometheus, preemption_delta, scrape, spec_decode_metrics
+from ladder.harness.scenarios import Scenario, Turn
 
 from ladder.dialect import LLAMACPP, prefill_reuse_check, throughput_cross_check
 

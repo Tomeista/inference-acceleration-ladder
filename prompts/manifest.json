@@ -1,0 +1,54 @@
+{
+  "tokenizer": "../quantization-cpu/Qwen3-0.6B-W8A16",
+  "seed": 0,
+  "classes": {
+    "c1_chat": {
+      "class_id": "c1_chat",
+      "source": "chat",
+      "num_prompts": 128,
+      "target_input_tokens": 64,
+      "output_tokens": 128,
+      "exact_fit": 128,
+      "min_input_tokens": 64,
+      "max_input_tokens": 64,
+      "mean_input_tokens": 64.0,
+      "sha256_16": "6072bb3fce92d80e"
+    },
+    "c2_longform": {
+      "class_id": "c2_longform",
+      "source": "longform",
+      "num_prompts": 128,
+      "target_input_tokens": 128,
+      "output_tokens": 1024,
+      "exact_fit": 128,
+      "min_input_tokens": 128,
+      "max_input_tokens": 128,
+      "mean_input_tokens": 128.0,
+      "sha256_16": "743ec6906380a431"
+    },
+    "c3_rag": {
+      "class_id": "c3_rag",
+      "source": "rag",
+      "num_prompts": 128,
+      "target_input_tokens": 4000,
+      "output_tokens": 128,
+      "exact_fit": 128,
+      "min_input_tokens": 4000,
+      "max_input_tokens": 4000,
+      "mean_input_tokens": 4000.0,
+      "sha256_16": "bb7051adfc13eddc"
+    },
+    "c5_toolcall": {
+      "class_id": "c5_toolcall",
+      "source": "toolcall",
+      "num_prompts": 128,
+      "target_input_tokens": 600,
+      "output_tokens": 128,
+      "exact_fit": 128,
+      "min_input_tokens": 600,
+      "max_input_tokens": 600,
+      "mean_input_tokens": 600.0,
+      "sha256_16": "79c9d1279bb54db0"
+    }
+  }
+}
