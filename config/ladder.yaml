@@ -57,6 +57,20 @@ defaults:
     # than in serve_command as code is what made that a one-line fix.
     - "--flash-attn"
     - "on"
+    # Prompt caching off, so every request prefills its whole prompt.
+    #
+    # Enabled (the default), a slot keeps the prefix it shares with whatever it
+    # last held, so classes whose prompts share a preamble -- the tool schema in
+    # c5_toolcall, the chat template in c1_chat, a shared source document in
+    # c3_rag -- skip most of their prefill and report a TTFT the rung cannot
+    # deliver cold. Measured at 0.02 of prompt tokens actually processed for
+    # c1_chat at c=8.
+    #
+    # Two neighbouring knobs do NOT do this, both tried: --cache-reuse 0
+    # governs KV shifting within a slot, and --slot-prompt-similarity 0 only
+    # changes which slot is chosen, leaving the chosen slot free to reuse what
+    # it already holds.
+    - "--no-cache-prompt"
     - "--no-webui"
 
 configs:

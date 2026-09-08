@@ -30,4 +30,5 @@ llama-server \
     --metrics \
     --cache-reuse 0 \
     --flash-attn on \
+    --no-cache-prompt \
     --no-webui

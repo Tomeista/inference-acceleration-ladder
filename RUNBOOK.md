@@ -209,12 +209,29 @@ about a third of that and enough to see the curve's shape before committing.
   occupied slots offer eight chances to match. Lowering `--requests-per-cell`
   does nothing.
 
-  The fix is `--slot-prompt-similarity 0` in `extra_args` (`0.0 = disabled`;
-  the default is `0.10`), then `--emit-scripts`. `--cache-reuse 0` does not
-  govern this; it controls KV shifting within a slot, not slot selection.
-  Measured on this box, `c2_longform` sits at 0.97 legitimately — a few tokens
-  of shared template and nothing more — so 0.97 is the clean reading, not a
-  failure.
+  The fix is **`--no-cache-prompt`** in `extra_args`, then `--emit-scripts`.
+  Two neighbouring flags look like they should do it and do not, both measured
+  on this box:
+
+  | Flag | Effect on `c1_chat` c=8 |
+  |---|---|
+  | `--cache-reuse 0` (already set) | 0.02 — governs KV shifting inside a slot |
+  | `--slot-prompt-similarity 0` | 0.02 — only changes *which* slot is chosen |
+  | `--no-cache-prompt` | **1.00** |
+
+  Prefix reuse is a property of the slot's KV cache, not of slot assignment, so
+  only disabling prompt caching outright removes it.
+
+  `c2_longform` sits at 0.97 legitimately — a few tokens of shared template and
+  nothing more — so 0.97 is the clean reading for that class, not a failure.
+  This is why `ladder.report` cuts at 0.95 rather than 0.98.
+
+  **Turning this off is not free, and the cost is the point.** Uncached, every
+  request prefills in full, which competes with decode for the same GPU. At
+  c=1 the difference is under 6% on every cell; at c=8 it is large — `c3_rag`
+  throughput roughly halves and its p95 TTFT goes to ~10 s. Those are the
+  honest numbers for a cold cache; the cached ones were measuring a workload
+  that skipped most of its own prefill.
 - **`did not stop on length`.** `ignore_eos` stopped being honoured mid-sweep,
   usually a different server binary. Everything since the last clean cell is
   suspect.
