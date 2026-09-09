@@ -38,6 +38,30 @@ LOCK_PATH = PACKAGE_ROOT / "models.lock.json"
 BPW_TOLERANCE = 0.15
 
 
+def lock_entry(config_id: str) -> dict:
+    """Measured bpw for this rung, from models.lock.json.
+
+    The x-axis of the study, for both the speed sweep and the quality pass.
+    Recorded as a run parameter by each so a plot never has to join back to a
+    file that may have been regenerated since. Lives here rather than in either
+    driver because it belongs to the lock file, and because two copies of this
+    lookup would be two chances to read a different column.
+
+    Returns {} when the lock file is absent, rather than raising: a run without
+    it loses the x-axis but is still a run.
+    """
+    if not LOCK_PATH.exists():
+        return {}
+    lock = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
+    for row in lock.get("rungs", []):
+        if row.get("config_id") == config_id:
+            return {
+                "bpw_measured": row.get("bpw_measured"),
+                "gguf_size_bytes": row.get("size_bytes"),
+            }
+    return {}
+
+
 def measured_bpw(path: Path, n_params: int = QWEN3_8B_PARAMS) -> float | None:
     if not path.exists():
         return None

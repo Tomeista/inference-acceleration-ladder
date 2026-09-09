@@ -16,6 +16,12 @@ dependencies = [
 [project.optional-dependencies]
 mock = ["fastapi>=0.115", "uvicorn>=0.34"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
+# Only `ladder.build_evals` needs this, and only to rebuild the frozen eval
+# sets from HuggingFace. The sets are committed, so running the quality pass --
+# like running the speed sweep -- needs neither the extra nor the network.
+# pyarrow rather than `datasets`: the builder reads two pinned parquet files
+# over plain HTTP, which is the whole of what that dependency would be for.
+evals = ["pyarrow>=14"]
 
 [build-system]
 requires = ["hatchling"]

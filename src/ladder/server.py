@@ -65,6 +65,12 @@ class LadderConfig:
     # anchor | ladder | unsloth_dynamic. Groups are reported separately; see
     # the README on why the Unsloth rows are not points on the same curve.
     group: str = "ladder"
+    # Whether this rung is in the quality subset. The speed sweep runs all 32;
+    # scoring is a separate pass over a spanning subset, because accuracy needs
+    # far fewer points than a curve does and every point costs a GSM8K run.
+    # Carried in the config rather than in a shell loop so the subset is a
+    # property of the study, and so a test can assert it still spans the axis.
+    quality: bool = False
     served_model_name: str = "qwen3-8b"
     model_dir: str = "./models/gguf"
 
@@ -112,6 +118,7 @@ class LadderConfig:
             "bpw_nominal": self.bpw_nominal,
             "quant_family": self.family,
             "ladder_group": self.group,
+            "quality_subset": self.quality,
             "n_ctx_per_slot": self.n_ctx_per_slot,
             "n_ctx": self.n_ctx,
             "parallel": self.parallel,

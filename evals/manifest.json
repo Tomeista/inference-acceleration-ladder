@@ -1,0 +1,39 @@
+{
+  "seed": 0,
+  "built_by": "ladder.build_evals",
+  "suites": {
+    "mmlu": {
+      "suite_id": "mmlu",
+      "source": "mmlu",
+      "dataset": "cais/mmlu",
+      "revision": "c30699e8356da336a370243923dbaf21066bb9fe",
+      "parquet": "all/test-00000-of-00001.parquet",
+      "license": "MIT",
+      "n_items": 250,
+      "max_tokens": 16,
+      "temperature": 0.0,
+      "scorer": "mc",
+      "shots": 0,
+      "subjects": 57,
+      "instruction": "Reply with exactly \"Answer: X\", where X is A, B, C or D. Do not explain.",
+      "sha256_16": "a438cf65eed82843",
+      "key_sha256_16": "3bc2c096c2c29ba2"
+    },
+    "gsm8k": {
+      "suite_id": "gsm8k",
+      "source": "gsm8k",
+      "dataset": "openai/gsm8k",
+      "revision": "740312add88f781978c0658806c59bc2815b9866",
+      "parquet": "main/test-00000-of-00001.parquet",
+      "license": "MIT",
+      "n_items": 250,
+      "max_tokens": 512,
+      "temperature": 0.0,
+      "scorer": "numeric",
+      "shots": 0,
+      "instruction": "Solve the problem step by step. Then give the final numeric answer on its own last line, in the form \"#### <number>\".",
+      "sha256_16": "1f97eebe030c5d0c",
+      "key_sha256_16": "110a3c01b68acfdc"
+    }
+  }
+}

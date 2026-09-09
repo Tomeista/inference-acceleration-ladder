@@ -25,6 +25,16 @@
 #                   second variable on the x-axis and make the curve unreadable.
 #   n_gpu_layers    99 everywhere: full offload.
 #
+# `quality: true` marks the subset the accuracy pass scores (`ladder.quality`).
+# Nine rungs rather than all 32, spanning 16.01 -> 2.22 bpw with roughly one per
+# bit-width band. Speed needs a dense curve because the interesting parts are
+# small departures from a line; accuracy on 250 items has a +/-6pp confidence
+# interval, so a tenth of a bit between two rungs is unmeasurable and the extra
+# points would cost GSM8K runs to say nothing. The subset lives here rather than
+# in a shell loop so that it is a property of the study, and so a test can
+# assert it still spans the axis and still contains the BF16 reference every
+# other rung is compared against.
+#
 # Adding a rung: append an entry. `ladder.server` renders the serve script from
 # it; no code changes.
 
@@ -88,6 +98,7 @@ configs:
     bpw_nominal: 16.01
     family: fp
     group: anchor
+    quality: true
 
   # --- The ladder ----------------------------------------------------------
   #
@@ -109,6 +120,7 @@ configs:
     quant_type: Q8_0
     bpw_nominal: 8.51
     family: kquant
+    quality: true
 
   - id: q6_k_l
     name: Qwen3-8B Q6_K_L
@@ -125,6 +137,7 @@ configs:
     quant_type: Q6_K
     bpw_nominal: 6.57
     family: kquant
+    quality: true
 
   - id: q5_k_l
     name: Qwen3-8B Q5_K_L
@@ -141,6 +154,7 @@ configs:
     quant_type: Q5_K_M
     bpw_nominal: 5.72
     family: kquant
+    quality: true
 
   - id: q5_k_s
     name: Qwen3-8B Q5_K_S
@@ -173,6 +187,7 @@ configs:
     quant_type: Q4_K_M
     bpw_nominal: 4.91
     family: kquant
+    quality: true
 
   - id: q3_k_xl
     name: Qwen3-8B Q3_K_XL
@@ -234,6 +249,7 @@ configs:
     quant_type: Q3_K_M
     bpw_nominal: 4.03
     family: kquant
+    quality: true
 
   # Second near-exact tie: IQ3_M and Q2_K_L are 0.01 bpw apart.
   - id: iq3_m
@@ -283,6 +299,7 @@ configs:
     quant_type: Q2_K
     bpw_nominal: 3.21
     family: kquant
+    quality: true
 
   - id: iq2_m
     name: Qwen3-8B IQ2_M
@@ -291,6 +308,7 @@ configs:
     quant_type: IQ2_M
     bpw_nominal: 2.98
     family: iquant
+    quality: true
 
   # --- Unsloth dynamic, matched against the curve --------------------------
   #
@@ -388,3 +406,4 @@ configs:
     bpw_nominal: 2.22
     family: iquant
     group: sub3_extension
+    quality: true

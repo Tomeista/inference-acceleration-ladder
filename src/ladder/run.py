@@ -37,7 +37,7 @@ from ladder.harness.client import run_load, warmup
 from ladder.harness.scenarios import read_scenarios
 
 from ladder.dialect import LLAMACPP, prefill_reuse_check, throughput_cross_check
-from ladder.models import LOCK_PATH
+from ladder.models import lock_entry
 from ladder.server import (
     PACKAGE_ROOT,
     LadderConfig,
@@ -182,24 +182,6 @@ async def run_cell(
 
     records = [r.to_dict() for r in result.records]
     return values, notes, records
-
-
-def _lock_entry(config_id: str) -> dict:
-    """Measured bpw for this rung, from models.lock.json.
-
-    The x-axis of the study. Recorded as a run parameter so a plot never has to
-    join back to a file that may have been regenerated since.
-    """
-    if not LOCK_PATH.exists():
-        return {}
-    lock = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
-    for row in lock.get("rungs", []):
-        if row.get("config_id") == config_id:
-            return {
-                "bpw_measured": row.get("bpw_measured"),
-                "gguf_size_bytes": row.get("size_bytes"),
-            }
-    return {}
 
 
 async def preflight(cfg: LadderConfig, base_url: str) -> int:
@@ -369,7 +351,7 @@ async def main_async(args: argparse.Namespace) -> int:
 
     parent_params = {
         **cfg.as_params(),
-        **_lock_entry(cfg.id),
+        **lock_entry(cfg.id),
         "llamacpp_build": info.get("build_info"),
         "n_ctx_reported": reported_ctx,
         "server_url": base_url,
@@ -401,7 +383,7 @@ async def main_async(args: argparse.Namespace) -> int:
                 if args.mlflow:
                     cell_params = {
                         **cfg.as_params(),
-                        **_lock_entry(cfg.id),
+                        **lock_entry(cfg.id),
                         **cls.as_params(),
                         "concurrency": concurrency,
                         "num_requests": len(records),
