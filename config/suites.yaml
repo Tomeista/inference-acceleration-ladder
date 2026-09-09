@@ -1,0 +1,70 @@
+# Quality suites: what a rung is asked, and how the reply is scored.
+#
+# The speed sweep (config/classes.yaml) pins prompt *shapes* -- input length,
+# output length, entropy -- because for timing, what a prompt says barely
+# matters. Here it is the only thing that matters, so these are public benchmark
+# items with a known answer instead of length-matched filler.
+#
+# Both suites are ZERO-SHOT with an explicit answer-format instruction. That is
+# a real departure from lm-eval-harness, which is few-shot and scores by
+# log-likelihood ranking over the options rather than by reading the generated
+# text. Two consequences, both of which belong in any write-up:
+#
+#   * The absolute numbers here will NOT match published MMLU or GSM8K scores.
+#     They are not meant to. This study measures each rung against its own BF16
+#     reference on identical items, and that ratio is what the question asks
+#     for.
+#   * Because scoring reads generated text, a rung can fail by refusing the
+#     format rather than by being wrong. That is not noise to be regexed away;
+#     it is `unparseable_rate`, and it is expected to move before accuracy does.
+#
+# Dataset coordinates are pinned to a commit, not to `main`, for the same reason
+# ladder.yaml pins a gguf_file: a set that silently changes underneath a study
+# invalidates every comparison made across it. `ladder.build_evals` fetches
+# exactly these and records the digests in evals/manifest.json.
+#
+# Adding a suite: append an entry here and register a builder of the same
+# `source` name in `ladder.build_evals.BUILDERS`. Nothing else changes.
+
+defaults:
+  temperature: 0.0
+  n_items: 250
+  enabled: true
+
+suites:
+  - id: mmlu
+    name: MMLU (4-way multiple choice)
+    description: >-
+      Broad knowledge, stratified across all 57 subjects. Cheap -- the reply is
+      one letter, so the suite is prefill-bound and costs a couple of minutes a
+      rung. Also the least sensitive of the two: multiple choice can hold up
+      well after free-form reasoning has collapsed, which is exactly why it is
+      not the only suite here.
+    source: mmlu
+    dataset: cais/mmlu
+    revision: c30699e8356da336a370243923dbaf21066bb9fe
+    parquet: all/test-00000-of-00001.parquet
+    license: MIT
+    # One letter, plus room for a model that insists on saying "Answer: C".
+    # Deliberately tight: a rung that needs more than this to name a letter has
+    # failed the instruction, and truncated_rate should say so.
+    max_tokens: 16
+    scorer: mc
+
+  - id: gsm8k
+    name: GSM8K (grade-school math, chain of thought)
+    description: >-
+      Multi-step arithmetic reasoning with a checkable final answer. The
+      sensitive half of the pair: quantization damage shows up in a chain of
+      dependent steps long before it shows up in a single recall lookup. Also
+      the expensive half -- ~250 decode tokens an item rather than ~8.
+    source: gsm8k
+    dataset: openai/gsm8k
+    revision: 740312add88f781978c0658806c59bc2815b9866
+    parquet: main/test-00000-of-00001.parquet
+    license: MIT
+    # Generous, because a truncated chain is an unmeasured item rather than a
+    # wrong one and `truncated_rate` is a validity signal, not a result. Qwen3
+    # with thinking off lands around 150-250 tokens on these.
+    max_tokens: 512
+    scorer: numeric

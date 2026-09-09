@@ -300,6 +300,102 @@ each rung against the ladder rung nearest it in *measured* bpw. Then
 `sub3_extension` as the tail below 2.98 — three points, all Unsloth, not part of
 the curve.
 
+## Step 8: the quality pass
+
+The speed curve says a rung got faster. It cannot say what that cost, because
+every prompt in the sweep runs with `ignore_eos` so that content cannot affect
+timing. This pass scores instead, on nine rungs spanning the whole axis.
+
+**Same servers, same scripts.** Prompt caching changes how fast a rung answers,
+not what it answers, so there is no second serve-script set to keep in sync.
+
+```bash
+uv run python -m ladder.build_evals --check   # digests only, no network
+bash scripts/serve_bf16.sh & SRV=$!
+uv run python -m ladder.quality --config-id bf16 --preflight
+kill $SRV; wait $SRV 2>/dev/null || true
+```
+
+**Paste back the preflight.** It checks the mirror image of Step 3: that
+generation stops *naturally*. If every reply stops at `max_tokens`, the server
+is forcing length and nothing can be scored honestly. It also fails when no
+answer parses out of any of the four replies, which at BF16 means the chat
+template is not rendering the prompt as it was built.
+
+Then the sweep. **`bf16` must go first** — every other rung's
+`agreement_with_reference` is a per-item join against the answers it wrote:
+
+```bash
+for r in bf16 q8_0 q6_k q5_k_m q4_k_m q3_k_m q2_k iq2_m ud_iq1_s; do
+    bash scripts/serve_${r}.sh & SRV=$!
+    uv run python -m ladder.quality --config-id ${r}
+    kill $SRV; wait $SRV 2>/dev/null || true
+done
+```
+
+**Budget ~2 hours.** `mmlu` is one letter of output and costs 2–5 min a rung;
+`gsm8k` is ~250 decode tokens × 250 items and runs ~15 min at BF16, falling to
+~3 min at the bottom. Do not delete `results/quality/` mid-sweep — that is where
+the reference answers live, and losing them costs the agreement column.
+
+### The determinism floor, once
+
+llama.cpp batches, and batch composition changes floating-point reduction order,
+so two runs of the *same* weights can differ by a token. Measure how much before
+reading any small difference as a result:
+
+```bash
+bash scripts/serve_bf16.sh & SRV=$!
+uv run python -m ladder.quality --config-id bf16 --concurrency 1 --suffix c1
+kill $SRV; wait $SRV 2>/dev/null || true
+```
+
+Same rung, same prompts, different batching. The `agree` figure on that row is
+self-agreement, and **no accuracy gap smaller than its complement is a result.**
+If it comes back below ~0.99, say so in the write-up and treat it as the noise
+floor. The `--suffix` keeps it as its own row rather than superseding the c=8
+measurement.
+
+### Reading it
+
+```bash
+uv run python -m ladder.report --quality
+uv run python -m ladder.report --quality --csv quality.csv
+```
+
+**Accuracy is the headline and the blunter instrument.** At 250 items the 95%
+interval is about ±6 points — wider than most adjacent rungs will differ by. The
+table never prints the point estimate without the interval, for exactly that
+reason. Do not read a knee off the accuracy column alone.
+
+**`agree` is where the knee will actually show.** It is paired per item, so it
+sees a rung changing a third of its answers even when accuracy has not moved.
+Expect it to decline smoothly the whole way down while accuracy sits flat, then
+fall off.
+
+**`unparse` and `rep` are the failure modes, separated on purpose.** A rung that
+stops emitting `Answer: C` has degraded even where its parseable answers are
+right; a rung stuck in a loop has degraded differently again. Both usually move
+on `gsm8k` before anything moves on `mmlu`.
+
+### Warnings that mean stop
+
+- **`truncated=NN%`** above ~5%. Replies are being cut off at `max_tokens`, so
+  those items are unmeasured rather than wrong and the accuracy is a lower
+  bound. Raise the suite's `max_tokens` and re-run **every** rung — a suite
+  measured at two different caps is two different suites.
+- **`unparse` high on a *top* rung.** At BF16 or Q8_0 this is a scorer bug, not
+  a model result. Read `results/quality/<suite>/<rung>.jsonl`, which keeps the
+  raw text for this purpose, before believing the curve.
+- **digest failure from `build_evals --check`.** The eval sets have drifted from
+  the manifest; rungs measured either side of that are not comparable.
+- **`the reference answers ... were produced against eval sets ...`.** A stale
+  `results/quality/<suite>/bf16.jsonl` — from a smoke run against the mock, or
+  from before the eval sets were rebuilt. It joins by item id perfectly well and
+  the agreement column would be about nothing. Each items file carries a
+  `.meta.json` recording what produced it, which is what catches this. Re-run
+  the reference rung.
+
 ---
 
 ## What this study cannot tell you
@@ -311,10 +407,13 @@ clean is not evidence that quantization is clever; it is evidence that the GPU
 reads fewer bytes when there are fewer bytes. The informative parts are the
 departures: the matched-size trio, the I-quant behaviour, the flat TTFT line.
 
-**Nothing here measures quality.** A 2.22-bit Qwen3-8B may be fast and useless.
-The prompt sets run with `ignore_eos` and fixed lengths precisely so output
-*content* does not affect timing, which also means the outputs are not scoreable.
-Quality is a separate pass with natural stopping, on the same frozen prompts.
+**The speed sweep measures no quality.** A 2.22-bit Qwen3-8B may be fast and
+useless. The prompt sets run with `ignore_eos` and fixed lengths precisely so
+output *content* does not affect timing, which also means those outputs are not
+scoreable. That is what Step 8 is for: a separate pass, with natural stopping,
+over nine of the rungs. It answers "how much does it cost" — but only on two
+benchmarks, zero-shot, at 250 items each, which is a coarse instrument. Read
+that section's caveats before quoting a number from it.
 
 **Nothing here is a serving recommendation.** llama.cpp with eight slots on a
 bandwidth-limited unified-memory box is not how the models in the vLLM study

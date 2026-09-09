@@ -53,6 +53,22 @@ def prefix_reuse() -> float:
     return float(os.environ.get("MOCK_PREFIX_REUSE", "0"))
 
 
+def scripted_reply() -> str | None:
+    """A literal reply to emit instead of filler, or None for the filler.
+
+    The quality pass scores generated text, so a mock that always says "the
+    quick brown fox" can exercise the request loop but not the scorer, the
+    answer-key join, or the reference comparison. Setting this to "Answer: C"
+    turns the mock into a server with a known, checkable accuracy against the
+    real committed eval set -- which is what lets the whole scoring path be
+    tested without a GPU.
+
+    Read per request, like the two above, so one server instance can play
+    several roles across a test session.
+    """
+    return os.environ.get("MOCK_REPLY")
+
+
 def honours_ignore_eos() -> bool:
     """Whether this build reads ignore_eos out of the OpenAI request body.
 
@@ -162,7 +178,23 @@ async def chat_completions(request: Request):
     # The parameter is a llama.cpp native riding in the OpenAI body. A build
     # that drops it stops early on its own; that is what --preflight looks for.
     ignore_eos = bool(body.get("ignore_eos")) and honours_ignore_eos()
-    n_out = max_tokens if ignore_eos else min(max_tokens, 7)
+
+    # One "token" per piece, which is what makes max_tokens bite the same way it
+    # would on a real server: a scripted reply longer than the cap comes back
+    # truncated and finishes on "length", so the quality pass's truncation
+    # accounting has something real to measure.
+    reply = scripted_reply()
+    if reply is None:
+        n_out = max_tokens if ignore_eos else min(max_tokens, 7)
+        pieces = [WORDS[i % len(WORDS)] + " " for i in range(n_out)]
+        finish = "length" if ignore_eos else "stop"
+    else:
+        words = reply.split(" ")
+        pieces = [w + " " for w in words[:-1]] + [words[-1]]
+        truncated = len(pieces) > max_tokens
+        pieces = pieces[:max_tokens]
+        n_out = len(pieces)
+        finish = "length" if (truncated or ignore_eos) else "stop"
 
     if not body.get("stream"):
         return JSONResponse({"error": "this mock only implements streaming"}, status_code=400)
@@ -185,14 +217,12 @@ async def chat_completions(request: Request):
             await asyncio.sleep(TTFT_MS / 1000.0 * factor)
             yield _chunk(request_id, created, model, {"role": "assistant", "content": ""})
 
-            for i in range(n_out):
+            for i, piece in enumerate(pieces):
                 if i:
                     await asyncio.sleep(ITL_MS / 1000.0 * factor)
-                yield _chunk(request_id, created, model, {"content": WORDS[i % len(WORDS)] + " "})
+                yield _chunk(request_id, created, model, {"content": piece})
 
-            yield _chunk(
-                request_id, created, model, {}, finish="length" if ignore_eos else "stop"
-            )
+            yield _chunk(request_id, created, model, {}, finish=finish)
 
             # Counts tokens *processed*, so a cached prefix is not counted. This
             # is the shortfall prefill_reuse_check measures.

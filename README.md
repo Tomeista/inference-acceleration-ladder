@@ -10,7 +10,9 @@ axis as densely as the published checkpoints allow.
 This repository is **self-contained**: clone it and run it, nothing else
 required. The measurement code it shares with that study -- load client,
 percentile math, gauge sampling, MLflow structure -- is vendored under
-`src/ladder/harness/`, and the prompt sets are copied in with their digests.
+`src/ladder/harness/`, and the prompt sets are copied in with their digests. The
+benchmark items the quality pass scores are frozen into `evals/` the same way,
+so neither pass needs the network to run.
 
 ## Why a second study rather than more configs in the first
 
@@ -157,6 +159,70 @@ bytes non-uniformly changes *speed*. Expected to be "barely" — the kernel is
 chosen per tensor, so the mixture mostly shifts which kernel runs where. Worth
 showing rather than assuming. A test enforces that every UD rung has a partner.
 
+## What the speed curve cannot tell you, and the pass that can
+
+Every number above gets *better* as bits fall. That is the half of the trade the
+sweep can see, and on its own it argues for the bottom of the ladder. So there
+is a second pass — `ladder.quality` — that scores what the rungs actually say.
+
+It inverts nearly every choice the speed sweep makes, because the two want
+opposite things from a generation:
+
+| | `ladder.run` | `ladder.quality` |
+|---|---|---|
+| stopping | `ignore_eos`, length pinned | natural, truncation counted |
+| prompts | shapes with no right answer | benchmark items with a key |
+| rungs | all 32 | the 9 flagged `quality: true` |
+| output | discarded | scored and kept per item |
+
+What it does *not* invert is the server: the same `scripts/serve_<rung>.sh`, the
+same context and slots. Prompt caching changes how fast a rung answers, never
+what it answers.
+
+**Nine rungs, not 32.** `bf16, q8_0, q6_k, q5_k_m, q4_k_m, q3_k_m, q2_k, iq2_m,
+ud_iq1_s` — 16.01 down to 2.22 bpw. Speed needs a dense curve because its
+findings are small departures from a line. Accuracy at 250 items has a ±6 point
+confidence interval, so a tenth of a bit between two rungs is unmeasurable and
+the extra points would cost GSM8K runs to say nothing.
+
+**Two suites, both general, both zero-shot.** MMLU stratified across all 57
+subjects (one letter of output, minutes a rung) and GSM8K chain-of-thought (~250
+decode tokens an item, and the sensitive half — quantization damage shows up in
+a chain of dependent steps long before it shows up in a single recall lookup).
+Frozen into `evals/` with digests, exactly as `prompts/` is.
+
+**These numbers will not match published MMLU or GSM8K scores, and are not meant
+to.** Published figures are few-shot and scored by log-likelihood ranking over
+the options; these are zero-shot and scored by reading generated text. What the
+pass measures is each rung against *its own BF16 reference on identical items*,
+which is the quantity the question actually asks for. Contamination — both sets
+are in everyone's training data — cancels for the same reason: every comparison
+is the same base model against itself.
+
+**Accuracy is the headline and the blunt instrument; agreement is the sensitive
+one.** `agreement_with_reference` is the fraction of items a rung answers
+identically to BF16, paired item by item. A rung can hold its accuracy while
+churning a third of its answers, and only the paired metric sees that. The
+report never prints an accuracy without its interval, because at ±6 points a
+reader given the point estimate alone will find a knee wherever the noise dips.
+
+**Two failure modes are counted separately from being wrong.**
+`unparseable_rate` is a rung that has stopped producing an answer in the
+requested format — instruction-following usually breaks before accuracy does —
+and `repetition_ratio` is a rung stuck in a loop, which is how the sub-3-bit
+checkpoints fail. A single accuracy number merges all three into one decline and
+hides which one is happening.
+
+**Truncation is counted, never scored as wrong.** A reply cut off at
+`max_tokens` is an unmeasured item; folding it into the wrong pile would credit
+the scorer with knowing something it does not. Above 5% the report flags the
+cell and its accuracy should be read as a lower bound.
+
+The honest limit of all this: two benchmarks at 250 items is a coarse
+instrument, and it is deliberately coarse — enough to locate where the damage
+becomes obvious, not enough to rank two adjacent rungs. See the RUNBOOK's Step 8
+for the determinism floor that says how small a difference is readable at all.
+
 ## What is reused, and what is new
 
 Everything that turns requests into numbers came from the `bench` study and is
@@ -176,6 +242,14 @@ New here, and only this: `server.py` (llama.cpp's context arithmetic and CLI),
 `dialect.py` (a metric-name table and the prefill-reuse check), `models.py`
 (GGUF inventory and measured bits per weight), `run.py` (the driver, with
 engine-specific probing and guards).
+
+The quality pass is new too, and shares what it can: `quality.py` drives it
+through the same vendored `client.run_load` and `tracking` structure, and
+`report.py` reads it with the same most-recent-wins merge rule. Only three
+things are genuinely its own — `scoring.py` (extraction, Wilson intervals,
+degeneracy), `suites.py` (the frozen sets and their answer keys), and
+`build_evals.py`, which like `bench.build_prompts` is *not* needed to run
+anything: it builds `evals/` once and the output is committed.
 
 One change was made upstream to enable this, and it is backwards compatible:
 `metrics.py` gained a `MetricsDialect` describing what one engine calls things,
@@ -231,15 +305,22 @@ Every cell logs `prefill_processed_ratio` and warns below 0.98.
 ## Layout
 
 ```
-config/ladder.yaml      the 32 rungs
-config/classes.yaml     the four prompt classes
+config/ladder.yaml      the 32 rungs; `quality: true` marks the 9 that get scored
+config/classes.yaml     the four prompt classes (speed)
+config/suites.yaml      the two benchmark suites (quality)
 prompts/                frozen prompt sets + manifest.json (digests checked by the suite)
+evals/                  frozen benchmark items, answer keys + manifest.json (likewise)
 scripts/                generated serve + download scripts, committed
 src/ladder/
   server.py             config loader, serve scripts, /props probe, context guards
   dialect.py            llama.cpp metric names + the prefill-reuse check
   models.py             GGUF inventory, measured bits per weight
-  run.py                sweep driver and preflight
+  run.py                speed sweep driver and preflight
+  quality.py            quality pass driver and preflight
+  scoring.py            answer extraction, Wilson intervals, degeneracy measures
+  suites.py             suite loader; pairs frozen items with their answer keys
+  build_evals.py        one-time eval-set builder; output committed, not run-path
+  report.py             the merge rule, for both passes
   harness/              vendored from the bench study; see its __init__ docstring
 tests/mock_llama_server.py   fake llama-server, so the harness is testable without a GPU
 ```
@@ -250,8 +331,15 @@ No sibling checkout, no path dependencies:
 
 ```bash
 git clone <ladder-url> ladder
-cd ladder && uv sync --extra mock --extra dev && uv run pytest -q   # 46 tests
+cd ladder && uv sync --extra mock --extra dev && uv run pytest -q   # 141 tests
 ```
+
+That includes the whole quality path — suite loading, digest checks, scoring,
+the reference join and the MLflow nesting — driven against the mock
+llama-server, whose `MOCK_REPLY` makes it a server with a known and therefore
+checkable accuracy. Nothing it produces is a quality result; what it proves is
+that none of the plumbing is being exercised for the first time on the GPU box,
+two hours into a scoring pass.
 
 The tradeoff that buys is worth stating plainly: `src/ladder/harness/` is a
 copy, so a fix made upstream in `bench` does not arrive here on its own. The

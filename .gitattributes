@@ -11,3 +11,8 @@
 # rewrite would silently change every digest.
 *.jsonl -text
 prompts/manifest.json -text
+
+# The frozen eval sets, for the same reason. These are written with an explicit
+# LF by ladder.build_evals rather than inheriting the platform's newline, so a
+# rebuild on the Linux GPU box reproduces the committed digests exactly.
+evals/manifest.json -text
