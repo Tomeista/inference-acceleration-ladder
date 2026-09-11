@@ -53,6 +53,33 @@ _MC_LABELLED = re.compile(
 # sentence -- the single most likely way this fallback could invent answers.
 _MC_BARE = re.compile(r"(?<![A-Za-z])([A-D])(?![A-Za-z])")
 
+# MMLU-Pro runs to ten options, and the A-D extractor above cannot simply be
+# widened to A-J. Two of the added letters are ordinary English words in
+# uppercase -- "I" is the first-person pronoun, and a bare "A" opens sentences --
+# so the loose fallback that is safe over four letters starts inventing answers
+# over ten. That matters here more than it looks: 9% of MMLU-Pro's gold answers
+# ARE "I", so a rung whose prose degrades into "I I I ..." would score those
+# items correct, and the resulting bump would be indistinguishable from a real
+# result.
+#
+# Two changes, both narrowing:
+#
+#   the labelled form  a letter that is merely the first character of the next
+#                      word no longer counts. "the answer is a bit unclear" and
+#                      "the answer is I think so" match nothing rather than
+#                      yielding A and I.
+#   the bare fallback  drops "I" entirely. A reply of exactly "I" is scored
+#                      unparseable rather than as a commitment to option I --
+#                      the conservative direction, since `unparseable_rate` is a
+#                      measurement and a wrong answer is not. "Answer: I" is
+#                      unaffected; only the unlabelled form loses that letter.
+_MC10_LABELLED = re.compile(
+    r"answer\s*(?:is\s*)?[:\-]?\s*\**\s*\(?\s*([A-Ja-j])(?!\s*[A-Za-z])\s*[\)\.\:,]?",
+    re.IGNORECASE,
+)
+
+_MC10_BARE = re.compile(r"(?<![A-Za-z])([A-HJ])(?![A-Za-z])")
+
 # GSM8K's own convention, and what the prompt asks for.
 _GSM_HASH = re.compile(r"####\s*(-?\$?[\d,]*\.?\d+)")
 
@@ -70,6 +97,25 @@ def extract_mc(text: str) -> str | None:
     if matches:
         return matches[-1].upper()
     bare = _MC_BARE.findall(text)
+    if bare:
+        return bare[-1]
+    return None
+
+
+def extract_mc10(text: str) -> str | None:
+    """The letter this reply committed to, over A-J, or None.
+
+    Same shape as `extract_mc`, deliberately not the same function: the two
+    suites have different letter ranges and therefore different false-positive
+    surfaces, and sharing one extractor would mean widening MMLU's to A-J and
+    changing what the four-option suite scores.
+    """
+    if not text:
+        return None
+    matches = _MC10_LABELLED.findall(text)
+    if matches:
+        return matches[-1].upper()
+    bare = _MC10_BARE.findall(text)
     if bare:
         return bare[-1]
     return None
@@ -111,6 +157,7 @@ def extract_numeric(text: str) -> str | None:
 
 EXTRACTORS: dict[str, Callable[[str], str | None]] = {
     "mc": extract_mc,
+    "mc10": extract_mc10,
     "numeric": extract_numeric,
 }
 

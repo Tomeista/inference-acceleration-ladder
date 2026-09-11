@@ -185,11 +185,38 @@ findings are small departures from a line. Accuracy at 250 items has a ±6 point
 confidence interval, so a tenth of a bit between two rungs is unmeasurable and
 the extra points would cost GSM8K runs to say nothing.
 
-**Two suites, both general, both zero-shot.** MMLU stratified across all 57
-subjects (one letter of output, minutes a rung) and GSM8K chain-of-thought (~250
-decode tokens an item, and the sensitive half — quantization damage shows up in
-a chain of dependent steps long before it shows up in a single recall lookup).
-Frozen into `evals/` with digests, exactly as `prompts/` is.
+**Three suites, all general, all zero-shot.** MMLU stratified across all 57
+subjects (one letter of output, minutes a rung), MMLU-Pro stratified across its
+14 categories (also one letter, and the reason it is here is headroom — see
+below), and GSM8K chain-of-thought (~250 decode tokens an item, and the
+sensitive half — quantization damage shows up in a chain of dependent steps long
+before it shows up in a single recall lookup). Frozen into `evals/` with
+digests, exactly as `prompts/` is.
+
+Any one of them can be run alone with `--suites`, which is what makes re-scoring
+a single cell affordable:
+
+```bash
+uv run python -m ladder.quality --config-id q4_k_m --suites mmlu_pro
+```
+
+**Why MMLU-Pro was added, and what it does not add.** Qwen3-8B sits high enough
+on MMLU that there is little room between the BF16 anchor and the ceiling for
+damage to show; below it, 25% is the floor where every rung's score converges on
+guessing. MMLU-Pro keeps the same cheap shape — one letter — while moving the
+anchor down and the floor to 10%, which is roughly four times the space to fall
+through. What it is *not* is an independent second reading: **6,810 of its
+12,032 items are MMLU questions** that survived its filtering pass, so the two
+scores are correlated by construction. Each key row carries the item's `src`, so
+which side an item came from stays auditable; in the frozen 250-item sample,
+155 are inherited from MMLU.
+
+The caveat to re-check on the anchor before trusting a sweep: MMLU-Pro is built
+to reward chain-of-thought, and this pass runs it with thinking disabled and a
+16-token budget. That is deliberate — the direct-answer protocol is where the
+headroom comes from — but if BF16 shows a high `truncated_rate` or
+`unparseable_rate`, the fix is a larger budget and a re-run of every rung, not a
+change to the scorer.
 
 **These numbers will not match published MMLU or GSM8K scores, and are not meant
 to.** Published figures are few-shot and scored by log-likelihood ranking over
@@ -307,7 +334,7 @@ Every cell logs `prefill_processed_ratio` and warns below 0.98.
 ```
 config/ladder.yaml      the 32 rungs; `quality: true` marks the 9 that get scored
 config/classes.yaml     the four prompt classes (speed)
-config/suites.yaml      the two benchmark suites (quality)
+config/suites.yaml      the three benchmark suites (quality)
 prompts/                frozen prompt sets + manifest.json (digests checked by the suite)
 evals/                  frozen benchmark items, answer keys + manifest.json (likewise)
 scripts/                generated serve + download scripts, committed

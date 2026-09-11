@@ -34,6 +34,24 @@
       "instruction": "Solve the problem step by step. Then give the final numeric answer on its own last line, in the form \"#### <number>\".",
       "sha256_16": "1f97eebe030c5d0c",
       "key_sha256_16": "110a3c01b68acfdc"
+    },
+    "mmlu_pro": {
+      "suite_id": "mmlu_pro",
+      "source": "mmlu_pro",
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "revision": "b189ec765aa7ed75c8acfea42df31fdae71f97be",
+      "parquet": "data/test-00000-of-00001.parquet",
+      "license": "MIT",
+      "n_items": 250,
+      "max_tokens": 16,
+      "temperature": 0.0,
+      "scorer": "mc10",
+      "shots": 0,
+      "categories": 14,
+      "instruction": "Reply with exactly \"Answer: X\", where X is one of A-{last}. Do not explain.",
+      "n_from_original_mmlu": 155,
+      "sha256_16": "dc5f6f48dd23a1cb",
+      "key_sha256_16": "d530e72ff2ece8d9"
     }
   }
 }

@@ -19,6 +19,7 @@ from ladder.scoring import (
     aggregate,
     agreement,
     extract_mc,
+    extract_mc10,
     extract_numeric,
     normalize_number,
     repetition_ratio,
@@ -72,6 +73,63 @@ def test_the_fallback_does_not_fire_on_the_english_article():
 def test_the_last_commitment_wins():
     """Models reconsider mid-reply; the final answer is the answer."""
     assert extract_mc("Answer: A. Wait, that is wrong. Answer: D") == "D"
+
+
+# --------------------------------------------------------------------------
+# multiple choice, ten options
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("Answer: F", "F"),
+        ("Answer: I", "I"),
+        ("Answer: I.", "I"),
+        ("**Answer:** J", "J"),
+        ("Answer: (H)", "H"),
+        ("answer: g", "G"),
+        ("The answer is E", "E"),
+        ("Answer: The answer is I", "I"),
+        ("The correct option is (J).", "J"),
+        ("D", "D"),
+        ("Answer: A. Wait, that is wrong. Answer: I", "I"),
+    ],
+)
+def test_ten_option_letters_are_found_however_the_model_phrases_it(text, expected):
+    assert extract_mc10(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I am not sure about this one.",
+        "I I I I I I I I I I",
+        "I think I would need more information to answer.",
+    ],
+)
+def test_the_pronoun_never_becomes_option_i(text):
+    """The way this scorer would most easily invent a finding.
+
+    9% of MMLU-Pro's gold answers are "I". If the bare-letter fallback accepted
+    a standalone uppercase "I", a rung degrading into first-person filler would
+    score those items correct, and the bump would be indistinguishable from a
+    real result -- the exact failure this module exists to prevent, and the
+    reason `mc10` is a separate extractor rather than `mc` widened to A-J.
+    """
+    assert extract_mc10(text) is None
+
+
+def test_a_letter_that_merely_starts_the_next_word_is_not_an_answer():
+    """Both of these yield a letter under a naive widening of the A-D pattern."""
+    assert extract_mc10("the answer is a bit unclear") is None
+    assert extract_mc10("the answer is I think so") is None
+
+
+def test_narrowing_the_fallback_does_not_cost_the_letter_outright():
+    """Only the unlabelled form loses "I"; the instructed format keeps it."""
+    assert extract_mc10("Answer: I") == "I"
+    assert extract_mc10("The answer is (I).") == "I"
 
 
 # --------------------------------------------------------------------------

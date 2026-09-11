@@ -69,8 +69,16 @@ GSM8K_INSTRUCTION = (
     "Solve the problem step by step. Then give the final numeric answer on its "
     'own last line, in the form "#### <number>".'
 )
+# Templated rather than fixed, because MMLU-Pro's option count is not constant:
+# most items carry ten, but 2,051 of the 12,032 carry between three and nine
+# after the authors dropped choices they judged unreasonable. Naming a range the
+# item does not have would invite a letter that cannot be right.
+MMLU_PRO_INSTRUCTION = (
+    'Reply with exactly "Answer: X", where X is one of A-{last}. Do not explain.'
+)
 
 LETTERS = "ABCD"
+LETTERS10 = "ABCDEFGHIJ"
 
 
 # --------------------------------------------------------------------------
@@ -203,8 +211,109 @@ def build_gsm8k(suite: Suite, table: "Any") -> tuple[list[Scenario], list[dict],
     return scenarios, key, {"instruction": GSM8K_INSTRUCTION}
 
 
+def build_mmlu_pro(suite: Suite, table: "Any") -> tuple[list[Scenario], list[dict], dict]:
+    """250 items, stratified round-robin across all 14 categories.
+
+    Same construction as `build_mmlu` and for the same reason -- category sizes
+    run from 381 (history) to 1351 (math), so a flat draw would be mostly maths
+    and law -- but over 14 categories rather than 57 subjects, which is how
+    MMLU-Pro reorganised MMLU's subject list.
+
+    The two suites overlap by construction: 6,810 of MMLU-Pro's 12,032 items are
+    MMLU questions that survived its filtering pass, so a rung's scores here and
+    on `mmlu` are correlated rather than independent readings. Worth stating in
+    any write-up that reports both.
+    """
+    rows = table.to_pylist()
+    by_category: dict[str, list[dict]] = {}
+    for row in rows:
+        by_category.setdefault(row["category"], []).append(row)
+
+    rng = random.Random(SEED)
+    for category in sorted(by_category):
+        rng.shuffle(by_category[category])
+
+    picked: list[dict] = []
+    categories = sorted(by_category)
+    depth = 0
+    while len(picked) < suite.n_items:
+        added = False
+        for category in categories:
+            if depth < len(by_category[category]):
+                picked.append(by_category[category][depth])
+                added = True
+                if len(picked) == suite.n_items:
+                    break
+        if not added:
+            break
+        depth += 1
+
+    scenarios, key = [], []
+    for i, row in enumerate(picked):
+        choices = list(row["options"])
+        index = int(row["answer_index"])
+        # Both guards are re-upload detectors rather than defensive padding: on
+        # the pinned commit every row satisfies them. A future revision that
+        # renumbered options or truncated a list would otherwise build a key
+        # that points at the wrong choice, and every rung would score against
+        # it equally -- a study-wide error that no downstream check could see.
+        if not 0 <= index < len(choices):
+            raise ValueError(
+                f"{suite.id} item {row['question_id']}: answer_index {index} is "
+                f"outside its {len(choices)} options. The dataset revision has "
+                f"changed shape; re-check the pin in config/suites.yaml."
+            )
+        if row["answer"] != LETTERS10[index]:
+            raise ValueError(
+                f"{suite.id} item {row['question_id']}: answer {row['answer']!r} "
+                f"and answer_index {index} disagree. See above."
+            )
+
+        last = LETTERS10[len(choices) - 1]
+        options = "\n".join(f"{LETTERS10[j]}. {c}" for j, c in enumerate(choices))
+        instruction = MMLU_PRO_INSTRUCTION.format(last=last)
+        content = f"{row['question'].strip()}\n\n{options}\n\n{instruction}"
+        scenario_id = f"{suite.id}-{i:04d}"
+        scenarios.append(
+            Scenario(
+                scenario_id=scenario_id,
+                class_id=suite.id,
+                turns=[
+                    Turn(
+                        messages=[{"role": "user", "content": content}],
+                        max_tokens=suite.max_tokens,
+                        temperature=suite.temperature,
+                        extra_body=dict(EXTRA_BODY),
+                    )
+                ],
+            )
+        )
+        key.append(
+            {
+                "scenario_id": scenario_id,
+                "answer": LETTERS10[index],
+                "meta": {"category": row["category"], "src": row["src"]},
+            }
+        )
+
+    # `src` carries each item's provenance -- "ori_mmlu-*" for the inherited
+    # questions, "stemez-*"/"theoremQA-*"/"scibench-*" for the new ones -- so the
+    # overlap with the `mmlu` suite stays auditable from the frozen key alone.
+    from_mmlu = sum(1 for r in key if str(r["meta"]["src"]).startswith("ori_mmlu"))
+    return (
+        scenarios,
+        key,
+        {
+            "categories": len(categories),
+            "instruction": MMLU_PRO_INSTRUCTION,
+            "n_from_original_mmlu": from_mmlu,
+        },
+    )
+
+
 BUILDERS: dict[str, Callable[[Suite, Any], tuple[list[Scenario], list[dict], dict]]] = {
     "mmlu": build_mmlu,
+    "mmlu_pro": build_mmlu_pro,
     "gsm8k": build_gsm8k,
 }
 
