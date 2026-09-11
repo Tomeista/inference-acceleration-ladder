@@ -220,6 +220,52 @@ def test_every_suite_names_a_scorer_that_exists(suites):
         assert suite.scorer in EXTRACTORS
 
 
+def test_a_single_suite_can_be_run_on_its_own(suites):
+    """The pass must be selectable one benchmark at a time.
+
+    Three suites now, costing very different amounts -- mmlu and mmlu_pro are a
+    couple of minutes a rung, gsm8k is ~250 decode tokens an item. If selecting
+    one were not possible, re-scoring a single cell would cost the whole pass on
+    every rung, which is how a study stops being re-run at all.
+    """
+    for suite_id in suites:
+        assert [s.id for s in select_suites([suite_id])] == [suite_id]
+
+
+def test_an_unknown_suite_id_is_refused_by_name():
+    """A typo must not silently fall back to running everything."""
+    with pytest.raises(KeyError, match="mmlupro"):
+        select_suites(["mmlupro"])
+
+
+def test_every_multiple_choice_gold_answer_is_offered_by_its_prompt(suites):
+    """The key names a letter the item actually presents.
+
+    `test_prompts_and_key_describe_the_same_items` checks that the two files
+    agree on scenario ids; it cannot see a key whose letters have shifted
+    against the rendered options -- an off-by-one in a builder, or a dataset
+    re-upload that renumbered choices. That failure scores every rung at chance
+    equally, which looks like a result about the model rather than a bug, and
+    nothing downstream of the scorer could distinguish the two.
+    """
+    for suite in suites.values():
+        if not suite.scorer.startswith("mc"):
+            continue
+        scenarios, answers = load_suite(suite)
+        for scenario in scenarios:
+            prompt = scenario.turns[0].messages[0]["content"]
+            offered = {
+                line[0]
+                for line in prompt.splitlines()
+                if len(line) > 2 and line[0].isupper() and line[1] == "."
+            }
+            gold = answers[scenario.scenario_id]
+            assert gold in offered, (
+                f"{suite.id} {scenario.scenario_id}: key says {gold}, but the "
+                f"prompt offers {sorted(offered)}"
+            )
+
+
 def test_every_suite_pins_a_dataset_commit(suites):
     """`main` would let the benchmark change underneath the study."""
     for suite in suites.values():

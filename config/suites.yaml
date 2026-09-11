@@ -5,7 +5,7 @@
 # matters. Here it is the only thing that matters, so these are public benchmark
 # items with a known answer instead of length-matched filler.
 #
-# Both suites are ZERO-SHOT with an explicit answer-format instruction. That is
+# All three suites are ZERO-SHOT with an explicit answer-format instruction. That is
 # a real departure from lm-eval-harness, which is few-shot and scores by
 # log-likelihood ranking over the options rather than by reading the generated
 # text. Two consequences, both of which belong in any write-up:
@@ -50,6 +50,40 @@ suites:
     # failed the instruction, and truncated_rate should say so.
     max_tokens: 16
     scorer: mc
+
+  - id: mmlu_pro
+    name: MMLU-Pro (10-way multiple choice)
+    description: >-
+      MMLU with the trivial and mislabelled items removed and the option count
+      raised from four to ten. Added because Qwen3-8B sits high enough on MMLU
+      that quantization damage has little room to show before the ceiling; here
+      the anchor lands mid-range and the random floor is 10% rather than 25%,
+      which is roughly four times the space to fall through. Costs what MMLU
+      costs -- one letter of output -- so it is the cheap suite, not a second
+      GSM8K.
+
+      Not an independent second reading of MMLU: 6,810 of its 12,032 items are
+      MMLU questions that survived the filtering pass, so the two suites share
+      most of their provenance and their scores will move together. The `src`
+      field of every key row records which side an item came from.
+    source: mmlu_pro
+    dataset: TIGER-Lab/MMLU-Pro
+    revision: b189ec765aa7ed75c8acfea42df31fdae71f97be
+    parquet: data/test-00000-of-00001.parquet
+    license: MIT
+    # Same tight budget as mmlu, and the same reasoning: a rung that needs more
+    # than this to name a letter has failed the instruction rather than the
+    # question, and truncated_rate is what says so.
+    #
+    # One caveat worth re-checking on the bf16 anchor before trusting a full
+    # sweep. MMLU-Pro is built to reward chain-of-thought, and this pass runs it
+    # with `enable_thinking: false` and no room to reason -- a direct-answer
+    # protocol on a benchmark designed for the other kind. That is deliberate
+    # (it is where the headroom comes from) but if the anchor shows a high
+    # truncated_rate or unparseable_rate, the fix is a larger budget and a
+    # re-run of every rung, not a scorer change.
+    max_tokens: 16
+    scorer: mc10
 
   - id: gsm8k
     name: GSM8K (grade-school math, chain of thought)

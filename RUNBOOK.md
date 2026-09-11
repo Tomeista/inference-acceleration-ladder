@@ -333,10 +333,27 @@ for r in bf16 q8_0 q6_k q5_k_m q4_k_m q3_k_m q2_k iq2_m ud_iq1_s; do
 done
 ```
 
-**Budget ~2 hours.** `mmlu` is one letter of output and costs 2–5 min a rung;
-`gsm8k` is ~250 decode tokens × 250 items and runs ~15 min at BF16, falling to
-~3 min at the bottom. Do not delete `results/quality/` mid-sweep — that is where
-the reference answers live, and losing them costs the agreement column.
+**Budget ~2–3 hours.** `mmlu` and `mmlu_pro` are one letter of output and cost
+2–5 min a rung each; `gsm8k` is ~250 decode tokens × 250 items and runs ~15 min
+at BF16, falling to ~3 min at the bottom. Do not delete `results/quality/`
+mid-sweep — that is where the reference answers live, and losing them costs the
+agreement column.
+
+**Running one suite at a time.** `--suites` takes a comma-separated list and
+defaults to every enabled suite. Re-scoring one benchmark after a scorer fix, or
+adding a suite to rungs already measured, does not mean re-running the other
+two:
+
+```bash
+uv run python -m ladder.quality --config-id bf16 --suites mmlu_pro
+uv run python -m ladder.quality --config-id q4_k_m --suites mmlu_pro
+```
+
+`bf16` still goes first, for the same reason as above: the reference answers are
+stored per suite at `results/quality/<suite>/bf16.jsonl`, so a suite that has
+never been run on the reference rung has no agreement column to join against.
+The report merges the new cells in beside the existing ones by the same
+most-recent-wins rule a re-measured speed cell uses.
 
 ### The determinism floor, once
 

@@ -1298,6 +1298,9 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
+evals = [
+    { name = "pyarrow" },
+]
 mock = [
     { name = "fastapi" },
     { name = "uvicorn" },
@@ -1308,12 +1311,13 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'mock'", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "mlflow", specifier = ">=2.19" },
+    { name = "pyarrow", marker = "extra == 'evals'", specifier = ">=14" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "uvicorn", marker = "extra == 'mock'", specifier = ">=0.34" },
 ]
-provides-extras = ["mock", "dev"]
+provides-extras = ["mock", "dev", "evals"]
 
 [[package]]
 name = "mako"
